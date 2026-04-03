@@ -55,6 +55,6 @@ For regular Claude users see the official guide: https://support.claude.com/en/a
 
 ## License
 
-AGPL-3.0-or-later
+MIT
 
 Copyright (c) 2026-or-later 0xG
