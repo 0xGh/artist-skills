@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>curation_title</title>
+    <meta
+      name="description"
+      content="A space for artists to exhibit their work."
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-[#141414] text-zinc-50">
+    <div id="app"></div>
+    <script>
+      /** Configuration **/
+
+      /**
+       * Gallery config. Title and description are shown in the header and footer.
+       * The curator's wallet address is used as the default referrer for listing links.
+       * Curator links are displayed below the title with platform-specific icons.
+       * @type {{ curator: { name: string; walletAddress: `0x${string}`; links: Array<{type:'twitter'|'instagram'|'web',url:string,text?:string}> }, title: string, description?: string }}
+       */
+      const config = {
+        curator: {
+          name: "<curator_name>",
+          walletAddress:
+            "<curator_wallet_address>",
+          links: [
+            {
+              type: "twitter",
+              url: "https://x.com/<curator_x_handle>",
+              text: "@<curator_x_handle>",
+            },
+          ],
+        },
+        title: "<curation_title>",
+        description: "<curation_description>",
+      };
+
+      /**
+       * Each gallery entry is a listing ID, a Manifold share link (share.manifold.xyz/listing/...),
+       * or a link to a gallery/listing page (manifold.xyz/@.../id/... or gallery.manifold.xyz/...).
+       * An entry can also be a tuple [value, customDescription] to override the displayed description.
+       * @type {Array<string | number | [value: string | number, customDescription: string]>}
+       */
+      const listings = [
+        // insert listing links or ids here
+      ];
+
+      /** End of Configuration **/
+
+      /** The Manifold contract address, should not change */
+      const marketplaceAddress = "0x3a3548e060be10c2614d0a4cb0c03cc9093fd799";
+
+      const intermediaryTtlMs = 24 * 60 * 60 * 1000;
+      const mediaStyles =
+        "flex-1 mb-20 min-w-0 rounded-sm overflow-hidden shadow-lg shadow-black/70 bg-black object-cover landscape:mb-0 landscape:max-w-none landscape:max-h-full landscape:h-full";
+      const externalSvg =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M14 3h7v7"></path><path d="M10 14L21 3"></path><path d="M21 14v7h-7"></path><path d="M3 10V3h7"></path><path d="M3 21l11-11"></path></svg>';
+      const xAscii = '<span class="text-base leading-none">𝕏</span>';
+      const instagramSvg =
+        '<svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4"><path d="M7.75 2h8.5A5.75 5.75 0 0 1 22 7.75v8.5A5.75 5.75 0 0 1 16.25 22h-8.5A5.75 5.75 0 0 1 2 16.25v-8.5A5.75 5.75 0 0 1 7.75 2Zm0 1.9A3.85 3.85 0 0 0 3.9 7.75v8.5a3.85 3.85 0 0 0 3.85 3.85h8.5a3.85 3.85 0 0 0 3.85-3.85v-8.5a3.85 3.85 0 0 0-3.85-3.85h-8.5Zm8.95 1.43a1.17 1.17 0 1 1 0 2.34 1.17 1.17 0 0 1 0-2.34ZM12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10Zm0 1.9a3.1 3.1 0 1 0 0 6.2 3.1 3.1 0 0 0 0-6.2Z"></path></svg>';
+      const webSvg =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3c3 3 3 15 0 18"></path><path d="M12 3c-3 3-3 15 0 18"></path></svg>';
+      const iconByType = {
+        twitter: xAscii,
+        instagram: instagramSvg,
+        web: webSvg,
+      };
+
+      if (!config.curator.walletAddress.startsWith("0x"))
+        config.curator.walletAddress = atob(config.curator.walletAddress);
+
+      const app = document.getElementById("app");
+      const state = { loading: true, error: "", items: [] };
+
+      function readCache(key) {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(key));
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch {
+          return {};
+        }
+      }
+
+      function writeCache(key, data) {
+        try {
+          localStorage.setItem(key, JSON.stringify(data));
+        } catch {}
+      }
+
+      const creatorCache = readCache("curatedCreatorCache:v1");
+      const intermediaryCache = readCache("curatedIntermediaryCache:v1");
+
+      const now = Date.now();
+      for (const [url, entry] of Object.entries(intermediaryCache)) {
+        if (!entry || entry.expiresAt <= now) delete intermediaryCache[url];
+      }
+
+      const lazyObserver = new IntersectionObserver(
+        (entries, observer) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const el = entry.target;
+            observer.unobserve(el);
+
+            if (el.dataset.walletAddress) {
+              hydrateCreatorLink(el.dataset.walletAddress);
+              continue;
+            }
+
+            const animationUrl = el.dataset.animationUrl;
+            if (!animationUrl) continue;
+
+            const ext = animationUrl
+              .split("?")[0]
+              .split("#")[0]
+              .split(".")
+              .pop();
+            const isVideo =
+              /^data:video\//i.test(animationUrl) ||
+              ["mp4", "webm", "ogg", "mov", "m3u8"].includes(ext);
+            const isImage =
+              /^data:image\//i.test(animationUrl) ||
+              ["jpg", "jpeg", "png", "gif", "svg", "webp", "avif"].includes(
+                ext,
+              );
+
+            if (isVideo) {
+              const video = document.createElement("video");
+              video.className = el.className;
+              video.src = animationUrl;
+              video.muted = true;
+              video.loop = true;
+              video.autoplay = true;
+              video.playsInline = true;
+              video.controls = true;
+              el.replaceWith(video);
+            } else if (isImage) {
+              el.src = animationUrl;
+            } else {
+              const iframe = document.createElement("iframe");
+              iframe.className = el.className;
+              iframe.src = animationUrl;
+              iframe.loading = "lazy";
+              iframe.referrerPolicy = "no-referrer";
+              el.replaceWith(iframe);
+            }
+          }
+        },
+        { rootMargin: "0px 0px 200px 0px" },
+      );
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest(
+          '[data-action="toggle-description"]',
+        );
+        if (!button) return;
+        const root = button.closest("[data-description-root]");
+        if (!root) return;
+        const isExpanded = button.getAttribute("aria-expanded") === "true";
+        root
+          .querySelector("[data-description-ellipsis]")
+          .classList.toggle("hidden", !isExpanded);
+        root
+          .querySelector("[data-description-rest]")
+          .classList.toggle("hidden", isExpanded);
+        button.setAttribute("aria-expanded", String(!isExpanded));
+        button.textContent = isExpanded ? "show more" : "show less";
+      });
+
+      const html = String.raw;
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function sanitizeUrl(value, options = {}) {
+        if (typeof value !== "string" || !value.trim()) return "";
+        const trimmed = value.trim();
+        if (options.allowAnyDataUrl && /^data:/i.test(trimmed)) return trimmed;
+        try {
+          const parsed = new URL(trimmed, window.location.origin);
+          if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+            return "";
+          return parsed.href;
+        } catch {
+          return "";
+        }
+      }
+
+      function normalizeWalletAddress(value) {
+        if (typeof value !== "string") return null;
+        const trimmed = value.trim();
+        if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
+        return trimmed.toLowerCase();
+      }
+
+      function getEffectiveReferrerWallet() {
+        const fromQuery = new URLSearchParams(window.location.search).get(
+          "referrer",
+        );
+        return (
+          normalizeWalletAddress(fromQuery) ||
+          normalizeWalletAddress(config.curator.walletAddress) ||
+          config.curator.walletAddress
+        );
+      }
+
+      function resolveListingId(value) {
+        if (typeof value === "number" && Number.isInteger(value) && value >= 0)
+          return Promise.resolve(String(value));
+        if (typeof value === "string" && /^\d+$/.test(value.trim()))
+          return Promise.resolve(value.trim());
+        if (typeof value !== "string") return Promise.resolve(null);
+
+        try {
+          const u = new URL(value.trim());
+          const host = u.hostname.toLowerCase();
+
+          if (host === "share.manifold.xyz") {
+            const match = /^\/listing\/(\d+)\/?$/.exec(u.pathname);
+            return Promise.resolve(match ? match[1] : null);
+          }
+
+          const isIntermediary =
+            (host === "manifold.xyz" &&
+              /^\/@[^/]+\/id\/\d+\/?$/.test(u.pathname)) ||
+            (host === "gallery.manifold.xyz" &&
+              /^\/0x[a-fA-F0-9]{40}\/\d+\/?$/.test(u.pathname));
+
+          if (!isIntermediary) return Promise.resolve(null);
+
+          u.hash = "";
+          const normalized = u.href;
+          const cached = intermediaryCache[normalized];
+          if (cached && cached.expiresAt > Date.now())
+            return Promise.resolve(cached.listingId);
+
+          return fetch(normalized, { method: "GET", redirect: "follow" })
+            .then((r) => {
+              if (!r.ok) return null;
+              return r.text();
+            })
+            .then((source) => {
+              if (!source) return null;
+              let listingId = null;
+              source.split("\n").some((line) => {
+                const parts = line.trim().split('"identifier":');
+                if (parts.length !== 2) return false;
+                const candidate = Number(
+                  parts[1].split(",")[0].replace(/[^0-9]+/g, ""),
+                );
+                if (!Number.isNaN(candidate)) {
+                  listingId = String(candidate);
+                  return true;
+                }
+                return false;
+              });
+              if (listingId) {
+                intermediaryCache[normalized] = {
+                  listingId,
+                  expiresAt: Date.now() + intermediaryTtlMs,
+                };
+                writeCache("curatedIntermediaryCache:v1", intermediaryCache);
+              }
+              return listingId;
+            })
+            .catch(() => null);
+        } catch {
+          return Promise.resolve(null);
+        }
+      }
+
+      function getSeller(listing) {
+        if (typeof listing.seller === "string" && listing.seller)
+          return listing.seller;
+        if (listing.seller && typeof listing.seller.address === "string")
+          return listing.seller.address;
+        if (typeof listing.sellerAddress === "string" && listing.sellerAddress)
+          return listing.sellerAddress;
+        return "Unknown seller";
+      }
+
+      async function getCreatorProfile(walletAddress) {
+        const normalized = normalizeWalletAddress(walletAddress);
+        if (!normalized) return null;
+        if (creatorCache[normalized]) return creatorCache[normalized];
+
+        try {
+          const r = await fetch(
+            "https://identity.api.manifoldxyz.dev/badges?walletAddress=" +
+              encodeURIComponent(normalized),
+            { method: "GET" },
+          );
+          if (r.ok) {
+            const badges = await r.json();
+            const tw = badges?.twitterUsername?.trim();
+            const os = badges?.openseaUsername?.trim();
+            const sr = badges?.superrareUsername?.trim();
+            const profile = tw ? { name: tw, url: "https://x.com/" + tw }
+              : os ? { name: os, url: "https://opensea.io/" + os }
+              : sr ? { name: sr, url: "https://superrare.com/" + sr }
+              : null;
+            if (profile) {
+              creatorCache[normalized] = profile;
+              writeCache("curatedCreatorCache:v1", creatorCache);
+              return profile;
+            }
+          }
+        } catch {}
+
+        const fallback = {
+          name: normalized,
+          url: "https://opensea.io/" + normalized,
+        };
+        creatorCache[normalized] = fallback;
+        writeCache("curatedCreatorCache:v1", creatorCache);
+        return fallback;
+      }
+
+      async function hydrateCreatorLink(walletAddress) {
+        const profile = await getCreatorProfile(walletAddress);
+        if (!profile) return;
+        const normalized = normalizeWalletAddress(walletAddress);
+        const safeUrl = sanitizeUrl(profile.url);
+        if (!safeUrl) return;
+        for (const link of document.querySelectorAll(
+          '[data-wallet-address="' + normalized + '"]',
+        )) {
+          link.textContent = profile.name;
+          link.setAttribute("href", safeUrl);
+        }
+      }
+
+      function getCreatorDisplay(walletAddress) {
+        const normalized = normalizeWalletAddress(walletAddress);
+        if (!normalized)
+          return {
+            label: walletAddress || "Unknown",
+            href: "",
+            walletAddress: "",
+          };
+        const cached = creatorCache[normalized];
+        if (cached)
+          return {
+            label: cached.name,
+            href: cached.url,
+            walletAddress: normalized,
+          };
+        return {
+          label: normalized,
+          href: "https://opensea.io/" + normalized,
+          walletAddress: normalized,
+        };
+      }
+
+      function toItem(listing, customDescription) {
+        const token = listing.token || {};
+        const metadata = token.metadata || {};
+        const thumbnail = token.thumbnail || {};
+        const tokenAddress = token.address_ || "";
+        const tokenIdHex = token.id && token.id.hex ? token.id.hex : "0x0";
+        const tokenId = parseInt(tokenIdHex, 16);
+        if (!tokenAddress || !Number.isFinite(tokenId)) return null;
+        const seller = getSeller(listing);
+        return {
+          id: String(listing.id),
+          name: metadata.name || "Untitled",
+          description:
+            customDescription !== undefined
+              ? customDescription
+              : metadata.description || "",
+          image: thumbnail.image_url || metadata.image || "",
+          animation_url: thumbnail.animation_url || "",
+          finalized: !!listing.finalized,
+          created_by: seller,
+          owned_by: seller,
+          listingLink:
+            "https://gallery.manifold.xyz/" +
+            tokenAddress +
+            "/" +
+            tokenId +
+            "?referrer=" +
+            getEffectiveReferrerWallet(),
+        };
+      }
+
+      function renderCuratorLinks() {
+        return (config.curator.links || []).map((link) => {
+          const safeUrl = sanitizeUrl(link.url);
+          return html`<a
+            class="hover:text-white flex items-center gap-2"
+            href="${escapeHtml(safeUrl || "#")}"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            ${iconByType[link.type] || webSvg}
+            <span>${escapeHtml(link.text || link.type)}</span>
+          </a>`;
+        }).join("");
+      }
+
+      function renderDescription(item) {
+        if (!item.description) return "";
+        if (item.description.length <= 115) {
+          return html`<p
+            class="mt-4 text-zinc-300/70 leading-normal whitespace-pre-line"
+          >
+            ${escapeHtml(item.description)}
+          </p>`;
+        }
+        const first = escapeHtml(item.description.slice(0, 115));
+        const rest = escapeHtml(item.description.slice(115));
+        return html`<div data-description-root>
+          <p class="mt-4 text-zinc-300/70 leading-normal whitespace-pre-line">
+            <span>${first}</span><span data-description-ellipsis>...</span
+            ><span data-description-rest class="hidden">${rest}</span>
+          </p>
+          <button
+            data-action="toggle-description"
+            aria-expanded="false"
+            class="block mt-1 text-sm font-serif italic text-zinc-300"
+          >
+            show more
+          </button>
+        </div>`;
+      }
+
+      function renderItem(item) {
+        const creator = getCreatorDisplay(item.created_by);
+        const safeCreatorHref = sanitizeUrl(creator.href);
+        const safeListingLink = sanitizeUrl(item.listingLink);
+        const safeImage = sanitizeUrl(item.image || "", {
+          allowAnyDataUrl: true,
+        });
+        const safeAnimation = sanitizeUrl(item.animation_url || "", {
+          allowAnyDataUrl: true,
+        });
+        const saleRow = item.finalized
+          ? ""
+          : html`<a
+              class="mt-1 flex w-full items-center text-sm text-zinc-300/80 hover:text-zinc-300"
+              href="${escapeHtml(safeListingLink || "#")}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span class="relative flex h-3 w-3">
+                <span
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full bg-gradient-to-br from-rose-600 to-pink-700 opacity-75"
+                ></span>
+                <span
+                  class="relative inline-flex rounded-full h-3 w-3 bg-gradient-to-br from-rose-600 to-pink-700"
+                ></span>
+              </span>
+              <span class="mx-2">Sale</span>
+            </a>`;
+        return html`<article
+          class="flex flex-col p-4 whitespace-normal bg-gradient-to-br from-zinc-700/70 to-transparent landscape:inline-flex landscape:flex-row-reverse landscape:items-end landscape:h-full landscape:flex-none lg:landscape:mx-40 landscape:p-10 landscape:from-transparent"
+        >
+          <div class="p-4 landscape:p-8 landscape:w-[500px]">
+            <p class="font-serif italic">
+              <a
+                class="hover:text-zinc-200 break-all"
+                href="${escapeHtml(safeCreatorHref || "#")}"
+                ${safeCreatorHref ? "" : 'aria-disabled="true"'}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-wallet-address="${escapeHtml(creator.walletAddress)}"
+              >
+                ${escapeHtml(creator.label)}
+              </a>
+            </p>
+            <h2 class="text-2xl font-serif break-words text-zinc-50">
+              ${escapeHtml(item.name)}
+            </h2>
+            <p class="my-4 text-xs text-zinc-500">
+              Owned by ${escapeHtml(item.owned_by || "Unknown")}
+            </p>
+            ${saleRow} ${renderDescription(item)}
+            <p class="flex gap-4 mt-6 mb-4 text-sm text-zinc-300">
+              <a
+                class="hover:text-white flex items-center gap-2"
+                href="${escapeHtml(safeListingLink || "#")}"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                ${externalSvg}
+                <span>View Listing</span>
+              </a>
+            </p>
+          </div>
+          <a
+            href="${escapeHtml(safeListingLink || "#")}"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="${mediaStyles}"
+          >
+            <img
+              class="w-full h-full object-cover"
+              loading="lazy"
+              src="${escapeHtml(safeImage)}"
+              data-animation-url="${escapeHtml(safeAnimation)}"
+            />
+          </a>
+        </article>`;
+      }
+
+      function renderItems() {
+        if (state.loading) {
+          return html`<style>
+              @keyframes shimmer {
+                0% {
+                  background-position: -200% 0;
+                }
+                100% {
+                  background-position: 200% 0;
+                }
+              }
+            </style>
+            <p
+              class="p-8 min-h-[90vh] flex items-center justify-center landscape:min-h-0 landscape:h-full landscape:min-w-[80vw] inline-block text-transparent bg-clip-text [-webkit-background-clip:text] bg-[length:200%_100%] bg-gradient-to-r from-[#141414] via-zinc-50 to-[#141414] animate-[shimmer_6s_linear_infinite]"
+            >
+              Loading artworks
+            </p>`;
+        }
+        if (state.error) {
+          return html`<p class="p-8 text-rose-300">
+            ${escapeHtml(state.error)}
+          </p>`;
+        }
+        if (!state.items.length) {
+          return html`<p class="p-8 text-zinc-300/70">
+            No listings available.
+          </p>`;
+        }
+        return state.items.map((item) => renderItem(item)).join("");
+      }
+
+      function renderApp() {
+        const links = config.curator.links || [];
+        const primaryCuratorLink = links.find((l) => l.type === "twitter") || links.find((l) => l.type === "web") || links[0];
+        const safePrimaryCuratorLink = sanitizeUrl(
+          primaryCuratorLink ? primaryCuratorLink.url : "",
+        );
+        const shareText =
+          config.title +
+          " by " +
+          config.curator.name +
+          " " +
+          window.location.href;
+        document.title = config.title;
+        app.innerHTML = html`<div
+          data-scroll-root="true"
+          class="bg-gradient-to-bl from-[#1f1f1f] to-transparent overscroll-x-none landscape:flex landscape:bg-gradient-to-b landscape:whitespace-nowrap landscape:overflow-x-auto landscape:h-screen"
+        >
+          <header
+            class="flex flex-col items-center min-w-[80vw] min-h-[90vh] p-8 landscape:inline-flex landscape:h-full landscape:flex-none landscape:py-10 landscape:px-[20vw] landscape:flex-col-reverse"
+          >
+            <!-- prettier-ignore -->
+            <div class="flex-1 flex flex-col justify-center">
+              <h1
+                class="mt-10 text-lg md:text-3xl font-sans font-bold text-zinc-50 leading-none whitespace-pre-line"
+              >${escapeHtml(config.title)}</h1>
+              <p class="text-sm text-zinc-300/70 mt-2 whitespace-pre-line">${escapeHtml(
+              config.description || "",
+            )}</p>
+              <p class="text-xs text-zinc-300/50 mt-6">Curated by <a
+                  class="text-zinc-300 hover:text-zinc-100"
+                  href="${escapeHtml(safePrimaryCuratorLink || "#")}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >${escapeHtml(config.curator.name)}</a></p>
+              <p class="flex items-center gap-4 mt-1 text-xs text-zinc-300/80">
+                ${renderCuratorLinks()}
+              </p>
+            </div>
+          </header>
+
+          <main
+            class="landscape:inline-flex landscape:h-full landscape:flex-none"
+          >
+            ${renderItems()}
+          </main>
+
+          <div
+            class="relative min-w-full landscape:inline-flex landscape:h-full landscape:flex-none landscape:p-10"
+          >
+            <div
+              class="flex flex-col items-center justify-center w-full min-h-[90vh] landscape:min-h-0"
+            >
+              <div class="flex flex-col items-center justify-center gap-4">
+                <h3
+                  class="pb-2 text-2xl font-sans font-bold whitespace-pre-line"
+                >
+                  ${escapeHtml(config.title)}
+                </h3>
+                <p
+                  class="text-zinc-300/70 mb-10 text-sm text-center whitespace-pre-line"
+                >
+                  ${escapeHtml(config.description || "")}
+                </p>
+                <div
+                  class="flex flex-col gap-4 w-full max-w-[220px] text-center"
+                >
+                  <a
+                    class="py-2 rounded-3xl bg-white/90 hover:bg-white text-black text-center font-bold"
+                    href="https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                      shareText,
+                    )}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Share on 𝕏
+                  </a>
+                </div>
+                <div class="mt-6 text-sm text-zinc-400">
+                  Curated and built by
+                  <a
+                    class="text-zinc-300 hover:text-zinc-100"
+                    href="${escapeHtml(safePrimaryCuratorLink || "#")}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    ${escapeHtml(config.curator.name)}
+                  </a>
+                </div>
+                <div
+                  class="absolute bottom-4 mt-6 text-xs opacity-30 text-center whitespace-pre-line"
+                >
+                  add ?referrer=your_wallet_address to the share url to apply
+                  your referral to this curation listings.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+
+        for (const media of app.querySelectorAll("img[data-animation-url]")) {
+          if (media.dataset.animationUrl) lazyObserver.observe(media);
+        }
+        for (const link of app.querySelectorAll("[data-wallet-address]")) {
+          if (link.dataset.walletAddress) lazyObserver.observe(link);
+        }
+      }
+
+      async function loadListings() {
+        const entries = listings.map((entry) =>
+          Array.isArray(entry)
+            ? { value: entry[0], customDescription: entry[1] }
+            : { value: entry },
+        );
+
+        const idResults = await Promise.allSettled(
+          entries.map((e) => resolveListingId(e.value)),
+        );
+
+        const ids = [];
+        const seen = new Set();
+        const customDescriptions = new Map();
+
+        for (let i = 0; i < idResults.length; i++) {
+          if (idResults[i].status !== "fulfilled" || !idResults[i].value)
+            continue;
+          const id = String(idResults[i].value);
+          if (
+            entries[i].customDescription !== undefined &&
+            !customDescriptions.has(id)
+          )
+            customDescriptions.set(id, entries[i].customDescription);
+          if (!seen.has(id)) {
+            seen.add(id);
+            ids.push(id);
+          }
+        }
+
+        if (!ids.length) {
+          state.loading = false;
+          state.error = "No valid listing IDs or listing URLs found.";
+          renderApp();
+          return;
+        }
+
+        try {
+          const response = await fetch(
+            "https://marketplace.api.manifoldxyz.dev/listing/" +
+              marketplaceAddress +
+              "/batch",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({ listingIds: ids }),
+            },
+          );
+          if (!response.ok)
+            throw new Error("Failed to load listings: " + response.status);
+          const data = await response.json();
+          const fetched = Array.isArray(data)
+            ? data
+            : Array.isArray(data.listings)
+              ? data.listings
+              : [];
+          const byId = new Map(fetched.map((l) => [String(l.id), l]));
+          state.items = ids
+            .map((id) => {
+              const listing = byId.get(id);
+              return listing
+                ? toItem(listing, customDescriptions.get(id))
+                : null;
+            })
+            .filter(Boolean);
+          state.loading = false;
+          renderApp();
+        } catch (error) {
+          state.loading = false;
+          state.error =
+            "Failed to load listings. " +
+            (error && error.message ? error.message : "");
+          renderApp();
+        }
+      }
+
+      renderApp();
+      loadListings();
+    </script>
+  </body>
+</html>
