@@ -5,6 +5,7 @@ A library of agent skills for digital artists.
 ## Available Skills
 
 - **manifold-integration** - Add Manifold NFT auction and sale widgets to your website.
+- **create-curated-gallery** - Create or update a one-page curated gallery from Manifold listings with referral-enabled listing links.
 
 ## Installation
 
@@ -28,7 +29,7 @@ Navigate into the extracted folder and find the skill you want inside the `skill
 - On **macOS/Linux**: `~/.claude/skills/`
 - On **Windows**: `C:\Users\YOUR_USERNAME\.claude\skills\`
 
-Example: To install `manifold-integration`, copy the entire `skills/manifold-integration` folder so you end up with `~/.claude/skills/manifold-integration/`
+Example: To install `create-curated-gallery`, copy the entire `skills/create-curated-gallery` folder so you end up with `~/.claude/skills/create-curated-gallery/`
 
 **For other agents:** Replace `~/.claude/skills/` with your agent's skills directory.
 
@@ -49,6 +50,9 @@ If you have Node.js or npm installed, you can use the `add-skill` package:
 **Install a specific skill:**
 ```bash
 npx add-skill https://github.com/0xGh/artist-skills --skill manifold-integration
+
+# or
+npx add-skill https://github.com/0xGh/artist-skills --skill create-curated-gallery
 ```
 
 **List all available skills first:**
@@ -59,6 +63,9 @@ npx add-skill https://github.com/0xGh/artist-skills --list
 **Install globally (for all projects):**
 ```bash
 npx add-skill https://github.com/0xGh/artist-skills --skill manifold-integration --global
+
+# or
+npx add-skill https://github.com/0xGh/artist-skills --skill create-curated-gallery --global
 ```
 
 ## License
