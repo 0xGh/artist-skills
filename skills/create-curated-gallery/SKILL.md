@@ -21,6 +21,8 @@ Pick the gallery file in this order:
 3. Else if `curated/index.html` exists use it.
 4. Else create a new gallery file by copying `./template.html` from this skill folder to `./curated.html` in the current working folder.
 
+Read the gallery file.
+
 ### 2. Ask for Gallery Configuration First
 
 If a new file was created from the template ask only for basic gallery details first.
@@ -63,19 +65,30 @@ Tell them they can send:
 
 - a list of listing URLs or IDs
 - optional custom text after each URL or ID on the same line
+- clarify that only auction listings are supported at the moment
 
 Also explain:
 
 - By default each artwork shows its actual description from Manifold
 - If they provide custom text that custom text replaces the default description for that artwork
 
+After the user has provided all required values ask one follow-up:
+
+- optional `recommendedGallery` URL:
+  - se the information from the "Referral Behavior" section to explain the core proposition of this feature concisely
+  - explain this is optional
+  - explain this adds a "Recommended Gallery" link at the bottom of the page
+  - explain opening it passes the current curator wallet as `?ref=0x...` i.e. referral
+
 ### 4. Referral Behavior
 
 Explain this clearly in non-technical words:
 
 - When someone clicks a listing from the gallery the referral wallet is added automatically
-- By default the skill uses `config.curator.walletAddress`
-- If the page URL already has `?referrer=...` that value is used instead
+- By default all listing links use `config.curator.walletAddress`
+- If the gallery page URL includes `?ref=0x...` then every second listing uses that `?ref` wallet and the other listings still use the curator wallet
+- If `config.recommendedGallery` is set then the page shows a "Recommended Gallery" link and appends `?ref=<current-curator-wallet>` when opening it
+- One-line benefit to tell users: this helps curators cross-promote each other and share referral upside across linked galleries
 - Referral sales are expected to pay 6.9% if Manifold referral support is active at purchase time and still supported by Manifold
 
 ### 5. Ongoing Edits
