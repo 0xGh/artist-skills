@@ -5,7 +5,7 @@ A library of agent skills for digital artists.
 ## Available Skills
 
 - **manifold-integration** - Add Manifold NFT auction and sale widgets to your website.
-- **create-curated-gallery** - Create or update a one-page curated gallery from Manifold listings with referral-enabled listing links and earn 6.9% of the final sale price on referrals.
+- **create-curated-gallery** - Create or update a one-page curated gallery from Manifold listings.
 
 ## Installation
 

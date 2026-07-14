@@ -33,11 +33,12 @@ Ask for:
 - gallery `title`
 - gallery `description` (optional)
 - `curator.name`
-- `curator.walletAddress` (wallet address starting with `0x`)
 - optional `curator.links` entries with:
   - `type`: `twitter` or `instagram` or `web`
   - `url`
   - display `text` (optional)
+- whether to keep Manifold embeds enabled with `embed: true` or use external links with `embed: false`
+- optional `theme`: `dark` or `museum`
 
 Apply those values to the target file.
 
@@ -49,7 +50,7 @@ Before asking for any works provide the full add-works guidance in one message t
 Explain that each artwork entry can be:
 
 - a share link like `https://share.manifold.xyz/listing/<id>`
-- a listing ID like `12345` (generally 5-6, to not confuse with longer ids which manifold uses for other things)
+- a listing ID like `12345` (generally 5-6 digits, to not confuse with longer ids which Manifold uses for other things)
 - a direct Manifold link like:
   - `https://manifold.xyz/@.../id/<id>`
   - `https://gallery.manifold.xyz/<contract>/<tokenId>` (this might not work)
@@ -75,21 +76,17 @@ Also explain:
 After the user has provided all required values ask one follow-up:
 
 - optional `recommendedGallery` URL:
-  - se the information from the "Referral Behavior" section to explain the core proposition of this feature concisely
+  - explain this adds a "See More Artworks" link at the bottom of the page
   - explain this is optional
-  - explain this adds a "Recommended Gallery" link at the bottom of the page
-  - explain opening it passes the current curator wallet as `?ref=0x...` i.e. referral
 
-### 4. Referral Behavior
+### 4. Gallery Behavior
 
 Explain this clearly in non-technical words:
 
-- When someone clicks a listing from the gallery the referral wallet is added automatically
-- By default all listing links use `config.curator.walletAddress`
-- If the gallery page URL includes `?ref=0x...` then every second listing uses that `?ref` wallet and the other listings still use the curator wallet
-- If `config.recommendedGallery` is set then the page shows a "Recommended Gallery" link and appends `?ref=<current-curator-wallet>` when opening it
-- One-line benefit to tell users: this helps curators cross-promote each other and share referral upside across linked galleries
-- Referral sales are expected to pay 6.9% if Manifold referral support is active at purchase time and still supported by Manifold
+- The page loads Manifold listing data from the configured listing IDs or URLs
+- If `embed` is true the page shows Manifold listing widgets for live auctions
+- If `embed` is false the page shows simple external listing links
+- If `recommendedGallery` is set the page shows a "See More Artworks" link at the end
 
 ### 5. Ongoing Edits
 

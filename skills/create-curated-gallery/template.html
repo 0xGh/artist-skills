@@ -6,45 +6,39 @@
     <title>curation_title</title>
     <meta
       name="description"
-      content="A space for artists to exhibit their work."
+      content="<curation_description>"
     />
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-[#141414] text-zinc-50">
     <div id="app"></div>
     <script>
-      /** Configuration **/
-
       /**
-       * Gallery.
+       * Gallery config.
        *
        * Title and description are shown in the header and footer.
-       * Manifold listing links include `?referrer=` for attribution, granting 6.9% referral fee to curator if a collector acquires through their links.
+       * Set `recommendedGallery` to show a simple link to another gallery at the end.
+       * Set `embed` to false if you only want external listing links instead of Manifold widgets.
+       * Set `theme` to "museum" for a light museum-style layout.
        *
-       * Each gallery can optionally set `recommendedGallery` to another gallery URL.
-       * Opening that recommended gallery passes the current curator wallet as `?ref=`.
-       * If the page URL includes `?ref=0x...`. every second listing uses that wallet while the others use the curator wallet.
-       * In that opened gallery this gives the previous curator 50% of referral links.
-       * This incentivizes curators to recommend one another and form a linked gallery network.
-       *
-       * @type {{ curator: { name: string; walletAddress: `0x${string}`; links: Array<{type:'twitter'|'instagram'|'web',url:string,text?:string}> }, title: string, description?: string, recommendedGallery?: string }}
+       * @type {{ title: string; description?: string; theme?: 'dark' | 'museum'; embed?: boolean; curator: { name: string; links: Array<{type:'twitter'|'instagram'|'web',url:string,text?:string}> }; recommendedGallery?: string }}
        */
       const config = {
+        title: "<curation_title>",
+        description: "<curation_description>",
+        theme: "dark",
+        embed: true,
         curator: {
           name: "<curator_name>",
-          walletAddress:
-            "<curator_wallet_address>",
           links: [
             {
               type: "twitter",
-              url: "https://x.com/<curator_x_handle>",
-              text: "@<curator_x_handle>",
+              url: "https://x.com/<handle>",
+              text: "@<handle>",
             },
           ],
         },
-        title: "<curation_title>",
-        description: "<curation_description>",
-        recommendedGallery: "https://goo.com" // Optionally link to another curated gallery and get 50% referral links for yourself.
+        recommendedGallery: "",
       };
 
       /**
@@ -76,33 +70,12 @@
         web: webSvg,
       };
 
-      if (!config.curator.walletAddress.startsWith("0x")) {
-        try {
-          config.curator.walletAddress = atob(config.curator.walletAddress);
-        } catch {
-          alert("Invalid curator wallet address. Make sure it is configured properly in the source code.")
-        }
-      }
-
-      const curatorReferrer =
-        normalizeWalletAddress(config.curator.walletAddress) ||
-        config.curator.walletAddress;
-      const pageParams = new URLSearchParams(window.location.search);
-      const queryReferrer = normalizeWalletAddress(pageParams.get("ref"));
-      const recommendedGalleryUrl = (() => {
-        const safeGalleryUrl = sanitizeUrl(config.recommendedGallery || "");
-        if (!safeGalleryUrl) return "";
-        try {
-          const target = new URL(safeGalleryUrl);
-          target.searchParams.set("ref", curatorReferrer);
-          return target.href;
-        } catch {
-          return "";
-        }
-      })();
+      const recommendedGalleryUrl = sanitizeUrl(config.recommendedGallery || "");
 
       const app = document.getElementById("app");
       const state = { loading: true, error: "", items: [] };
+      let manifoldAssetsLoaded = false;
+      let statusRefreshNonce = 0;
 
       function readCache(key) {
         try {
@@ -185,18 +158,38 @@
         const button = event.target.closest(
           '[data-action="toggle-description"]',
         );
-        if (!button) return;
-        const root = button.closest("[data-description-root]");
+        if (button) {
+          const root = button.closest("[data-description-root]");
+          if (!root) return;
+          const isExpanded = button.getAttribute("aria-expanded") === "true";
+          root
+            .querySelector("[data-description-ellipsis]")
+            .classList.toggle("hidden", !isExpanded);
+          root
+            .querySelector("[data-description-rest]")
+            .classList.toggle("hidden", isExpanded);
+          button.setAttribute("aria-expanded", String(!isExpanded));
+          button.textContent = isExpanded ? "show more" : "show less";
+          return;
+        }
+
+        const detailsToggle = event.target.closest(
+          '[data-action="toggle-embed-details"]',
+        );
+        if (!detailsToggle) return;
+        const root = detailsToggle.closest("[data-embed-root]");
         if (!root) return;
-        const isExpanded = button.getAttribute("aria-expanded") === "true";
-        root
-          .querySelector("[data-description-ellipsis]")
-          .classList.toggle("hidden", !isExpanded);
-        root
-          .querySelector("[data-description-rest]")
-          .classList.toggle("hidden", isExpanded);
-        button.setAttribute("aria-expanded", String(!isExpanded));
-        button.textContent = isExpanded ? "show more" : "show less";
+        const panel = root.querySelector("[data-embed-details]");
+        if (!panel) return;
+        const isExpanded =
+          detailsToggle.getAttribute("aria-expanded") === "true";
+
+        panel.classList.toggle("hidden", isExpanded);
+        panel.setAttribute("aria-hidden", String(isExpanded));
+        detailsToggle.setAttribute("aria-expanded", String(!isExpanded));
+        detailsToggle.innerHTML = isExpanded
+          ? "Details <span aria-hidden='true'>▾</span>"
+          : "Details <span aria-hidden='true'>▴</span>";
       });
 
       const html = String.raw;
@@ -382,7 +375,7 @@
         };
       }
 
-      function toItem({ listing, customDescription, itemIndex }) {
+      function toItem({ listing, customDescription }) {
         const token = listing.token || {};
         const metadata = token.metadata || {};
         const thumbnail = token.thumbnail || {};
@@ -391,10 +384,6 @@
         const tokenId = parseInt(tokenIdHex, 16);
         if (!tokenAddress || !Number.isFinite(tokenId)) return null;
         const seller = getSeller(listing);
-        const listingReferrer =
-          queryReferrer && itemIndex % 2 === 1
-            ? queryReferrer
-            : curatorReferrer;
         return {
           id: String(listing.id),
           name: metadata.name || "Untitled",
@@ -404,17 +393,90 @@
               : metadata.description || "",
           image: thumbnail.image_url || metadata.image || "",
           animation_url: thumbnail.animation_url || "",
-          finalized: !!listing.finalized,
+          saleEnded: deriveSaleEnded(listing),
           created_by: seller,
           owned_by: seller,
-          listingLink:
-            "https://gallery.manifold.xyz/" +
-            tokenAddress +
-            "/" +
-            tokenId +
-            "?referrer=" +
-            listingReferrer,
+          listingLink: "https://gallery.manifold.xyz/" + tokenAddress + "/" + tokenId,
         };
+      }
+
+      function toNumeric(value) {
+        if (typeof value === "number") return value;
+        if (typeof value === "string" && /^\d+$/.test(value))
+          return Number(value);
+        if (
+          value &&
+          typeof value === "object" &&
+          typeof value.hex === "string" &&
+          /^0x[0-9a-f]+$/i.test(value.hex)
+        ) {
+          return Number(BigInt(value.hex));
+        }
+        return NaN;
+      }
+
+      function deriveSaleEnded(listing) {
+        if (!listing || typeof listing !== "object") return false;
+        if (listing.finalized === true) return true;
+        const details = listing.details || {};
+        const totalSold = toNumeric(listing.totalSold);
+        const totalAvailable = toNumeric(details.totalAvailable);
+        if (
+          Number.isFinite(totalSold) &&
+          Number.isFinite(totalAvailable) &&
+          totalAvailable > 0 &&
+          totalSold >= totalAvailable
+        ) {
+          return true;
+        }
+        const endTimeSec = toNumeric(details.endTime);
+        if (Number.isFinite(endTimeSec) && endTimeSec > 0) {
+          return endTimeSec * 1000 < Date.now();
+        }
+        return false;
+      }
+
+      async function refreshSaleStatuses(ids) {
+        // NOTE for skills/workflows: Manifold batch listing responses may lag.
+        // We refine sale status using single-listing endpoint per listing id.
+        const nonce = ++statusRefreshNonce;
+        const checks = await Promise.allSettled(
+          ids.map(async (id) => {
+            const res = await fetch(
+              "https://marketplace.api.manifoldxyz.dev/listing/" +
+                marketplaceAddress +
+                "/" +
+                id,
+              {
+                method: "GET",
+                headers: { Accept: "application/json" },
+              },
+            );
+            if (!res.ok) return { id, saleEnded: null };
+            const listing = await res.json();
+            return { id, saleEnded: deriveSaleEnded(listing) };
+          }),
+        );
+        if (nonce !== statusRefreshNonce) return;
+
+        const endedById = new Map();
+        for (const result of checks) {
+          if (result.status !== "fulfilled") continue;
+          const value = result.value;
+          if (value && typeof value.saleEnded === "boolean")
+            endedById.set(String(value.id), value.saleEnded);
+        }
+        if (!endedById.size) return;
+
+        let changed = false;
+        state.items = state.items.map((item) => {
+          if (!endedById.has(item.id)) return item;
+          const next = endedById.get(item.id);
+          if (item.saleEnded === next) return item;
+          changed = true;
+          return { ...item, saleEnded: next };
+        });
+        return changed;
       }
 
       function renderCuratorLinks() {
@@ -457,6 +519,34 @@
         </div>`;
       }
 
+      function ensureManifoldAssets() {
+        if (!config.embed || manifoldAssetsLoaded) return;
+        manifoldAssetsLoaded = true;
+        const head = document.head;
+        const linkConnect = document.createElement("link");
+        linkConnect.rel = "stylesheet";
+        linkConnect.href = "https://connect.manifoldxyz.dev/3.3.0/connect.css";
+        head.appendChild(linkConnect);
+
+        const linkMarket = document.createElement("link");
+        linkMarket.rel = "stylesheet";
+        linkMarket.href =
+          "https://marketplace.manifoldxyz.dev/3.5.18/marketplace.css";
+        head.appendChild(linkMarket);
+
+        const scriptConnect = document.createElement("script");
+        scriptConnect.src =
+          "https://connect.manifoldxyz.dev/3.3.0/connect.umd.min.js";
+        scriptConnect.async = true;
+        head.appendChild(scriptConnect);
+
+        const scriptMarket = document.createElement("script");
+        scriptMarket.src =
+          "https://marketplace.manifoldxyz.dev/3.5.18/marketplace.umd.min.js";
+        scriptMarket.async = true;
+        head.appendChild(scriptMarket);
+      }
+
       function renderItem(item) {
         const creator = getCreatorDisplay(item.created_by);
         const safeCreatorHref = sanitizeUrl(creator.href);
@@ -467,7 +557,7 @@
         const safeAnimation = sanitizeUrl(item.animation_url || "", {
           allowAnyDataUrl: true,
         });
-        const saleRow = item.finalized
+        const saleRow = item.saleEnded
           ? ""
           : html`<a
               class="mt-1 flex w-full items-center text-sm text-zinc-300/80 hover:text-zinc-300"
@@ -485,10 +575,108 @@
               </span>
               <span class="mx-2">Sale</span>
             </a>`;
+        const embedSaleIndicator = item.saleEnded
+          ? ""
+          : html`<div
+              class="absolute -right-1 -top-1 z-20 pointer-events-none"
+              title="Live sale"
+            >
+              <span class="relative flex h-3 w-3">
+                <span
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full bg-gradient-to-br from-rose-600 to-pink-700 opacity-75"
+                ></span>
+                <span
+                  class="relative inline-flex rounded-full h-3 w-3 bg-gradient-to-br from-rose-600 to-pink-700"
+                ></span>
+              </span>
+            </div>`;
+        const listingSection = config.embed
+          ? html`<div class="relative mt-6 mb-0 text-zinc-300">
+              ${embedSaleIndicator}
+              <div
+                class="border border-solid border-zinc-600 rounded-md px-3 py-3.5 bg-zinc-900/20"
+              >
+                <div class="manifold" data-embed-root>
+                  ${item.saleEnded
+                    ? ""
+                    : html`<div
+                          data-widget="m-listing-price"
+                          data-id="${escapeHtml(item.id)}"
+                          data-network="1"
+                        ></div>
+                        <div class="mt-2">
+                          <div
+                            data-widget="m-listing-bid-form-rich"
+                            data-id="${escapeHtml(item.id)}"
+                            data-network="1"
+                          ></div>
+                        </div>`}
+                  <div
+                    class="${item.saleEnded
+                      ? "mt-0"
+                      : "mt-2"} text-xs text-zinc-300/80 inline-flex items-center gap-2"
+                  >
+                    ${item.saleEnded
+                      ? html`<span class="tracking-wide opacity-80">ENDED</span
+                          ><span aria-hidden="true">·</span>`
+                      : ""}
+                    <button
+                      type="button"
+                      data-action="toggle-embed-details"
+                      aria-expanded="false"
+                      class="hover:text-zinc-100 inline-flex items-center gap-2"
+                    >
+                      Details <span aria-hidden="true">▾</span>
+                    </button>
+                  </div>
+                  <div
+                    data-embed-details
+                    aria-hidden="true"
+                    class="hidden mt-3 pt-3 border-t border-zinc-700"
+                  >
+                    <div
+                      data-widget="m-listing-interactions"
+                      data-id="${escapeHtml(item.id)}"
+                      data-network="1"
+                    ></div>
+                    <p class="mt-2 text-xs text-zinc-300/80">
+                      <a
+                        class="hover:text-white inline-flex items-center gap-2"
+                        href="${escapeHtml(safeListingLink || "#")}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        ${externalSvg}
+                        <span>View Listing</span>
+                      </a>
+                    </p>
+                  </div>
+                </div>
+                ${item.saleEnded
+                  ? ""
+                  : html`<div
+                      data-widget="m-connect"
+                      data-delay-auth="true"
+                      data-network="1"
+                    ></div>`}
+              </div>
+            </div>`
+          : html`<p class="flex gap-4 mt-6 mb-4 text-sm text-zinc-300">
+              <a
+                class="hover:text-white flex items-center gap-2"
+                href="${escapeHtml(safeListingLink || "#")}"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                ${externalSvg}
+                <span>View Listing</span>
+              </a>
+            </p>`;
+
         return html`<article
           class="flex flex-col p-4 whitespace-normal bg-gradient-to-br from-zinc-700/70 to-transparent landscape:inline-flex landscape:flex-row-reverse landscape:items-end landscape:h-full landscape:flex-none lg:landscape:mx-40 landscape:p-10 landscape:from-transparent"
         >
-          <div class="p-4 landscape:p-8 landscape:w-[500px]">
+          <div class="p-4 landscape:px-8 landscape:w-[500px]">
             <p class="font-serif italic">
               <a
                 class="hover:text-zinc-200 break-all"
@@ -507,18 +695,8 @@
             <p class="my-4 text-xs text-zinc-500">
               Owned by ${escapeHtml(item.owned_by || "Unknown")}
             </p>
-            ${saleRow} ${renderDescription(item)}
-            <p class="flex gap-4 mt-6 mb-4 text-sm text-zinc-300">
-              <a
-                class="hover:text-white flex items-center gap-2"
-                href="${escapeHtml(safeListingLink || "#")}"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                ${externalSvg}
-                <span>View Listing</span>
-              </a>
-            </p>
+            ${config.embed ? "" : saleRow} ${renderDescription(item)}
+            ${listingSection}
           </div>
           <a
             href="${escapeHtml(safeListingLink || "#")}"
@@ -568,6 +746,15 @@
       }
 
       function renderApp() {
+        if (
+          config.embed &&
+          !state.loading &&
+          !state.error &&
+          Array.isArray(state.items) &&
+          state.items.length > 0
+        ) {
+          ensureManifoldAssets();
+        }
         const links = config.curator.links || [];
         const primaryCuratorLink =
           links.find((l) => l.type === "twitter") ||
@@ -576,31 +763,123 @@
         const safePrimaryCuratorLink = sanitizeUrl(
           primaryCuratorLink ? primaryCuratorLink.url : "",
         );
-        const shareUrl = (() => {
-          try {
-            const u = new URL(window.location.href);
-            u.searchParams.delete("ref");
-            return u.toString();
-          } catch {
-            return window.location.href;
-          }
-        })();
+        const shareUrl = window.location.href;
         const shareText =
-          config.title +
-          " by " +
-          config.curator.name +
-          " " +
-          shareUrl;
+          config.title + " by " + config.curator.name + " " + shareUrl;
         document.title = config.title;
-        app.innerHTML = html`<div
-          data-scroll-root="true"
-          class="bg-gradient-to-bl from-[#1f1f1f] to-transparent overscroll-x-none landscape:flex landscape:bg-gradient-to-b landscape:whitespace-nowrap landscape:overflow-x-auto landscape:h-screen"
-        >
-          <header
-            class="flex flex-col items-center min-w-[80vw] min-h-[90vh] p-8 landscape:inline-flex landscape:h-full landscape:flex-none landscape:py-10 landscape:px-[20vw] landscape:flex-col-reverse"
+        app.innerHTML = html`${config.embed || config.theme === "museum"
+            ? html`<style>
+                .manifold {
+                  --manifold-theme--color--primary: inherit;
+                  --manifold-text--color--body: inherit;
+                  --manifold-text--color--muted: inherit;
+                  --manifold-text--font-family--body: inherit;
+                  --manifold-element--color--background: transparent;
+                  --manifold-page--color--background: transparent;
+                  --m-marketplace-panel--color--background: transparent;
+                  --manifold-border--color: transparent;
+                  --manifold-border--radius: 0 !important;
+                  --m-marketplace-popup--color--background: hsl(
+                    0,
+                    0%,
+                    10%,
+                    0.5
+                  );
+                  --m-marketplace-input--color--background: transparent;
+                  --m-marketplace-price--padding--left: 0;
+                  --m-marketplace-price--padding--right: 0;
+                }
+                .manifold [data-embed-details],
+                .manifold [data-embed-details] *,
+                .manifold [data-widget="m-listing-interactions"],
+                .manifold [data-widget="m-listing-interactions"] * {
+                  background: transparent !important;
+                }
+                .manifold [data-action="toggle-embed-details"] {
+                  color: currentColor !important;
+                  background: transparent !important;
+                  border: 0 !important;
+                  box-shadow: none !important;
+                }
+                .manifold [data-widget="m-listing-price"],
+                .manifold [data-widget="m-listing-price"] * {
+                  padding-left: 0 !important;
+                  padding-right: 0 !important;
+                }
+                #connect,
+                #connect *,
+                #m-connection,
+                #m-connection *,
+                [data-widget="m-connect"],
+                [data-widget="m-connect"] * {
+                  width: 100% !important;
+                  border-radius: 0.375rem !important;
+                  border: 0;
+                  max-width: none !important;
+                  margin-top: 0.5em;
+                }
+                ${config.theme === "museum"
+                  ? `
+                [data-scroll-root="true"] {
+                  background: #f2f4f7 !important;
+                  color: #010101;
+                  // font-family: "Courier New", Courier, "Lucida Console",
+                  //   "Liberation Mono", Monaco, monospace !important;
+                }
+
+                [data-scroll-root="true"] article {
+                  background: transparent !important;
+                  border-bottom: 1px solid #e5e5df;
+                }
+                [data-scroll-root="true"] h1,
+                [data-scroll-root="true"] h2,
+                [data-scroll-root="true"] h3 {
+                  color: #333 !important;
+                }
+                [data-scroll-root="true"] p,
+                [data-scroll-root="true"] a,
+                [data-scroll-root="true"] button {
+                  color: #2e2e2e !important;
+                }
+                [data-scroll-root="true"] .shadow-black\\/70 {
+                  --tw-shadow-color: rgba(20, 28, 45, 0.1) !important;
+                }
+                [data-scroll-root="true"] .text-zinc-500,
+                [data-scroll-root="true"] .text-zinc-400,
+                [data-scroll-root="true"] .text-zinc-300\\/80,
+                [data-scroll-root="true"] .text-zinc-300\\/70 {
+                  color: #888 !important;
+                }
+                [data-scroll-root="true"] .bg-zinc-900\\/20 {
+                  background: transparent !important;
+                }
+                [data-scroll-root="true"] .border-zinc-700,
+                [data-scroll-root="true"] .border-zinc-600 {
+                  border-color: #d8d8d2 !important;
+                }
+                [data-scroll-root="true"] .manifold {
+                  --manifold-theme--color--primary: hsl(0deg, 0%, 8%);
+                  --manifold-text--color--body: hsl(0deg, 0%, 16%);
+                  --manifold-text--color--muted: hsla(0deg, 0%, 16%, 0.64);
+                  --manifold-page--color--background: #fff;
+                  --manifold-element--color--background: #fff;
+                  --manifold-border--color: #d8d8d2;
+                  --m-marketplace-popup--color--background: hsla(0,0%,96%,0.84);
+                  --m-marketplace-panel--color--background: transparent;
+                }
+                `
+                  : ""}
+              </style>`
+            : ""}
+          <div
+            data-scroll-root="true"
+            class="bg-gradient-to-bl from-[#1f1f1f] to-transparent overscroll-x-none landscape:flex landscape:bg-gradient-to-b landscape:whitespace-nowrap landscape:overflow-x-auto landscape:h-screen"
           >
-            <!-- prettier-ignore -->
-            <div class="flex-1 flex flex-col justify-center">
+            <header
+              class="flex flex-col items-center min-w-[80vw] min-h-[90vh] p-8 landscape:inline-flex landscape:h-full landscape:flex-none landscape:py-10 landscape:px-[20vw] landscape:flex-col-reverse"
+            >
+              <!-- prettier-ignore -->
+              <div class="flex-1 flex flex-col justify-center">
               <h1
                 class="mt-10 text-lg md:text-3xl font-sans font-bold text-zinc-50 leading-none whitespace-pre-line"
               >${escapeHtml(config.title.trim())}</h1>
@@ -617,68 +896,68 @@
                 ${renderCuratorLinks()}
               </p>
             </div>
-          </header>
+            </header>
 
-          <main
-            class="landscape:inline-flex landscape:h-full landscape:flex-none"
-          >
-            ${renderItems()}
-          </main>
-
-          <div
-            class="relative min-w-full landscape:inline-flex landscape:h-full landscape:flex-none landscape:p-10"
-          >
-            <div
-              class="flex flex-col items-center justify-center w-full min-h-[90vh] landscape:min-h-0"
+            <main
+              class="landscape:inline-flex landscape:h-full landscape:flex-none"
             >
-              <div class="flex flex-col items-center justify-center gap-4">
-                <!--prettier-ignore -->
-                <h3
+              ${renderItems()}
+            </main>
+
+            <div
+              class="relative min-w-full landscape:inline-flex landscape:h-full landscape:flex-none landscape:p-10"
+            >
+              <div
+                class="flex flex-col items-center justify-center w-full min-h-[90vh] landscape:min-h-0"
+              >
+                <div class="flex flex-col items-center justify-center gap-4">
+                  <!--prettier-ignore -->
+                  <h3
                   class="pb-2 text-2xl font-sans font-bold whitespace-pre-line"
                 >${escapeHtml(config.title.trim())}</h3>
-                <!--prettier-ignore -->
-                <p
+                  <!--prettier-ignore -->
+                  <p
                   class="text-zinc-300/70 text-sm text-center whitespace-pre-line line-clamp-1"
                 >${escapeHtml((config.description || "").trim())}</p>
-                <div
-                  class="flex flex-col gap-4 w-full max-w-[220px] text-center"
-                >
-                  <a
-                    class="py-2 rounded-3xl bg-white/90 hover:bg-white text-black text-center font-bold"
-                    href="https://twitter.com/intent/tweet?text=${encodeURIComponent(
-                      shareText,
-                    )}"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <div
+                    class="flex flex-col gap-4 w-full max-w-[220px] text-center"
                   >
-                    Share on 𝕏
-                  </a>
-                  ${recommendedGalleryUrl
-                    ? html`<a
-                        class="mt-8 py-2 rounded-3xl border border-zinc-300/70 hover:border-zinc-200 text-zinc-200 hover:text-zinc-100 text-center"
-                        href="${escapeHtml(recommendedGalleryUrl)}"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        See More Artworks →
-                      </a>`
-                    : ""}
-                  <div class="text-sm text-zinc-400">
-                    Curated by
                     <a
-                      class="text-zinc-300 hover:text-zinc-100"
-                      href="${escapeHtml(safePrimaryCuratorLink || "#")}"
+                      class="py-2 rounded-3xl bg-white/90 hover:bg-white text-black text-center font-bold"
+                      href="https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                        shareText,
+                      )}"
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      ${escapeHtml(config.curator.name)}
+                      Share on 𝕏
                     </a>
+                    ${recommendedGalleryUrl
+                      ? html`<a
+                          class="mt-8 py-2 rounded-3xl border border-zinc-300/70 hover:border-zinc-200 text-zinc-200 hover:text-zinc-100 text-center"
+                          href="${escapeHtml(recommendedGalleryUrl)}"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          See More Artworks →
+                        </a>`
+                      : ""}
+                    <div class="text-sm text-zinc-400">
+                      Curated by
+                      <a
+                        class="text-zinc-300 hover:text-zinc-100"
+                        href="${escapeHtml(safePrimaryCuratorLink || "#")}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        ${escapeHtml(config.curator.name)}
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>`;
+          </div>`;
 
         for (const media of app.querySelectorAll("img[data-animation-url]")) {
           if (media.dataset.animationUrl) lazyObserver.observe(media);
@@ -749,19 +1028,21 @@
               : [];
           const byId = new Map(fetched.map((l) => [String(l.id), l]));
           state.items = ids
-            .map((id, itemIndex) => {
+            .map((id) => {
               const listing = byId.get(id);
               return listing
                 ? toItem({
                     listing,
                     customDescription: customDescriptions.get(id),
-                    itemIndex,
                   })
                 : null;
             })
             .filter(Boolean);
           state.loading = false;
           renderApp();
+          refreshSaleStatuses(ids).then((changed) => {
+            if (changed) renderApp();
+          });
         } catch (error) {
           state.loading = false;
           state.error =
